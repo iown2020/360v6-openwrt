@@ -1,0 +1,123 @@
+name: Build 360V6 ImmortalWrt
+
+on:
+  workflow_dispatch:
+
+env:
+  REPO_URL: https://github.com/immortalwrt/immortalwrt.git
+  REPO_BRANCH: openwrt-25.12
+  CONFIG_FILE: .config
+  DIY_SCRIPT: diy.sh
+  FILES_DIR: files
+  TZ: Asia/Shanghai
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Initialization Environment
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+        sudo -E apt-get -qq update
+        sudo -E apt-get -qq install -y ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
+          bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib \
+          git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev \
+          libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libreadline-dev libssl-dev libtool lrzsz \
+          mkisofs msmtp nano ninja-build p7zip p7zip-full patch pkgconf python3 python3-pip libpython3-dev qemu-utils \
+          rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev zstd
+        sudo -E apt-get -qq autoremove --purge
+        sudo -E apt-get -qq clean
+        sudo timedatectl set-timezone "$TZ"
+
+    - name: Maximize Build Space
+      uses: easimon/maximize-build-space@master
+      with:
+        root-reserve-mb: 2048
+        swap-size-mb: 1024
+        remove-dotnet: 'true'
+        remove-android: 'true'
+        remove-haskell: 'true'
+
+    - name: Clone Source Code
+      run: |
+        df -h
+        git clone --depth 1 -b $REPO_BRANCH $REPO_URL openwrt
+
+    - name: Update & Install Feeds
+      run: |
+        cd openwrt
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
+
+    - name: Load Custom Configuration & Files
+      run: |
+        [ -e $FILES_DIR ] && cp -rf $FILES_DIR openwrt/files
+        chmod +x openwrt/files/etc/uci-defaults/* 2>/dev/null || true
+        [ -e $DIY_SCRIPT ] && chmod +x $DIY_SCRIPT && ./$DIY_SCRIPT
+        [ -e $CONFIG_FILE ] && cp -f $CONFIG_FILE openwrt/.config
+        cd openwrt
+        make defconfig
+
+    - name: Download Package Dependencies
+      id: package
+      run: |
+        cd openwrt
+        make download -j8
+        find dl -size -1024c -exec ls -l {} \;
+        find dl -size -1024c -exec rm -f {} \;
+
+    - name: Compile the Firmware
+      id: compile
+      run: |
+        cd openwrt
+        echo -e "$(nproc) thread compile"
+        make -j$(nproc) || make -j1 || make -j1 V=s
+        echo "status=success" >> $GITHUB_OUTPUT
+
+    - name: Check Space Usage
+      if: (!cancelled())
+      run: df -h
+
+    - name: Organize Firmware Files
+      id: organize
+      if: steps.compile.outputs.status == 'success' && !cancelled()
+      run: |
+        cd openwrt/bin/targets/qualcommax/ipq60xx
+        rm -rf packages
+        echo "FIRMWARE_PATH=$PWD" >> $GITHUB_ENV
+        echo "TAG_NAME=360V6-$(date +'%Y.%m.%d-%H%M')" >> $GITHUB_ENV
+        echo "status=success" >> $GITHUB_OUTPUT
+
+    - name: Upload Firmware to Release
+      uses: softprops/action-gh-release@v2
+      if: steps.organize.outputs.status == 'success' && !cancelled()
+      with:
+        tag_name: ${{ env.TAG_NAME }}
+        name: 奇虎 360 V6 固件 (${{ env.TAG_NAME }})
+        body: |
+          ### 奇虎 360 V6 (IPQ6018) 最新 ImmortalWrt 固件
+
+          #### 特性亮点
+          - 稳定内核：Linux 6.12（基于官方 openwrt-25.12 稳定分支）
+          - 硬件加速：集成 QCA NSS 硬件网络加速驱动（NSS Core + NSS DP）
+          - 代理套件：全内置 Passwall，集成本地 Xray-core、Sing-box、ChinaDNS-NG 及 Hysteria 内核
+          - 出厂加固：
+            - CPU 频率上限安全锁定为 1.2 GHz（防止原装老化电源触发过流锁死保护）
+            - 5G / 2.4G Wi-Fi 默认为纯 WPA2-PSK，关闭 PMF，规避闭源固件并发死锁
+            - 内核连续内存预留 16MB，激进回收 Slab，防止 Order-3 内存耗尽
+            - Passwall Go 运行时内置内存阈值限制（GOMEMLIMIT=45MiB）
+
+          #### 默认访问信息
+          - 管理地址：`192.168.2.1`
+          - 管理密码：`password`
+          - Wi-Fi 名称：`ImmortalWrt-2.4G` / `ImmortalWrt-5G`
+        files: |
+          ${{ env.FIRMWARE_PATH }}/*qihoo_360v6*
+          ${{ env.FIRMWARE_PATH }}/sha256sums
+          ${{ env.FIRMWARE_PATH }}/config.buildinfo

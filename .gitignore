@@ -1,0 +1,8 @@
+openwrt/
+bin/
+dl/
+build_dir/
+staging_dir/
+*.log
+*.tmp
+.DS_Store
