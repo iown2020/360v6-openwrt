@@ -3,6 +3,9 @@ name: Build 360V6 ImmortalWrt
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt.git
   REPO_BRANCH: openwrt-25.12
@@ -16,9 +19,6 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
-
     - name: Initialization Environment
       env:
         DEBIAN_FRONTEND: noninteractive
@@ -44,6 +44,9 @@ jobs:
         remove-android: 'true'
         remove-haskell: 'true'
 
+    - name: Checkout
+      uses: actions/checkout@v4
+
     - name: Clone Source Code
       run: |
         df -h
@@ -63,6 +66,10 @@ jobs:
         [ -e $CONFIG_FILE ] && cp -f $CONFIG_FILE openwrt/.config
         cd openwrt
         make defconfig
+        echo "=== 检查目标架构 ==="
+        grep 'CONFIG_TARGET_BOARD="qualcommax"' .config || (echo "错误：目标平台未被正确设为 qualcommax！" && exit 1)
+        grep 'CONFIG_TARGET_qualcommax_ipq60xx_DEVICE_qihoo_360v6=y' .config || (echo "错误：目标设备未被正确设为 360v6！" && exit 1)
+        echo "目标架构与设备校验通过！"
 
     - name: Download Package Dependencies
       id: package
