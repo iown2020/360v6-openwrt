@@ -121,7 +121,7 @@ jobs:
             - Passwall Go 运行时内置内存阈值限制（GOMEMLIMIT=45MiB）
 
           #### 默认访问信息
-          - 管理地址：`192.168.2.1`
+          - 管理地址：`192.168.50.1`
           - 管理密码：`password`
           - Wi-Fi 名称：`ImmortalWrt-2.4G` / `ImmortalWrt-5G`
         files: |
