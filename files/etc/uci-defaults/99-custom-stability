@@ -55,4 +55,13 @@ uci add_list dhcp.@dnsmasq[0].rebind_domain='ipv6.msftncsi.com'
 uci add_list dhcp.@dnsmasq[0].rebind_domain='ntp.org.cn'
 uci commit dhcp
 
+# 7. 默认启用 UPnP / NAT-PMP（miniupnpd，与 NSS 卸载兼容，用于游戏/P2P 自动端口映射）
+uci -q set upnpd.config.enable_upnp='1'
+uci -q set upnpd.config.enable_natpmp='1'
+uci -q set upnpd.config.internal_iface='lan'
+uci -q set upnpd.config.external_iface='wan'
+uci -q commit upnpd
+/etc/init.d/miniupnpd enable 2>/dev/null
+/etc/init.d/miniupnpd restart 2>/dev/null
+
 exit 0
