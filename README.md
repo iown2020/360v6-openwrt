@@ -1,6 +1,6 @@
-# 奇虎 360 V6 (Qihoo 360V6) 专属 ImmortalWrt 固件云编译
+# 奇虎 360 V6 (Qihoo 360V6) 专属 LibWrt (NSS) 固件云编译
 
-本项目基于官方 **ImmortalWrt openwrt-25.12 稳定分支**，为 360 Wi-Fi 6 路由器（高通 IPQ6018）定制打造，专注**高稳定性、低发热、杜绝掉电死机**，并内置完整的 Passwall 及双核心（Xray + Sing-box）。
+本项目基于 **LibWrt `25.12-nss`**（ImmortalWrt 25.12 软件源 + QCA NSS 硬件加速补丁）为 360 V6 路由器（高通 IPQ6000 / IPQ6018 平台）定制，专注**NSS 硬件转发、低延迟、高稳定性、杜绝掉电死机**，并内置 **EasyTier 2.4.5** 组网工具（已彻底移除 Passwall）。
 
 ---
 
@@ -17,10 +17,11 @@
 ### 3. 内核 Order-3 内存防崩溃
 - 预留 16MB 连续物理物理内存（`vm.min_free_kbytes=16384`），并激进回收 Slab 缓存，防止大流量下网络驱动原子内存分配失败。
 
-### 4. 科学代理全内置
-- **Passwall 套件直接编译入 SquashFS ROM**（非外部模块），开机即用。
-- 集成 **Xray-core** 与 **Sing-box** 最新内核，配合 ChinaDNS-NG 实现国内外 DNS 分流。
-- 启动脚本预注入 Go 运行时内存限制（`GOMEMLIMIT=45MiB`），彻底阻断 64 位 Go 程序对路由器 512MB 内存的无节制占用。
+### 4. NSS 硬件加速 + EasyTier 组网
+- **真正的 NSS 卸载**：基于 LibWrt `25.12-nss`，编译 `kmod-qca-nss-drv` / `kmod-qca-nss-ecm` / `kmod-qca-nss-dp` 与 `nss-firmware-ipq60xx`，NAT、PPPoE、IPv6、VLAN、Wi-Fi 转发均可命中 NSS 硬件流表，测速时 CPU 不再被软件转发打满。
+- **规避冲突**：首次开机自动关闭 fw4 的 `flow_offloading` / `flow_offloading_hw` / FullCone 以及 Packet Steering（这些软件加速与 NSS ECM 互斥，同时开启会导致丢包与高延迟）。
+- **EasyTier 2.4.5 内置**：由官方 `v2.4.5` tag 源码构建（aarch64，含 `easytier-core` / `easytier-cli` / `easytier-web` 与 LuCI 界面），开箱即可组建 P2P 虚拟局域网。
+- 已移除 Passwall 及其全部依赖（Xray / Sing-box / ChinaDNS-NG），关闭 PPPoE 激进保活探测，空闲内存与 CPU 占用更低。
 
 ---
 
@@ -37,14 +38,14 @@
    - 电压平方增长项 $(0.90 / 0.75)^2 \approx 1.44$ 结合频率 1.26 倍增长，导致 **CPU 动态功耗剧增达 81%**。
    - 360V6 原厂标配为 12V 1.5A（18W）适配器。使用数年后滤波电容容量衰减、ESR（等效串联电阻）上升。当 CPU 从休眠突然进入满载的微秒瞬间，极高的电流变化率（di/dt）会造成电压瞬跌，直接触发电源内部 PWM 控制芯片的**过流/欠压闭锁关断（Latch-off）**。此时电源输出锁死为 0V，表现为路由器突发掉电，且**看门狗无法重启**，必须彻底拔掉电源插头放电数秒后重插才能开机。
 2. **流量转发由 QCA NSS 硬件加速承载，CPU 收益极低**：
-   - 高通 IPQ6018 配备独立的 NSS 硬件网络协处理器。千兆线速 NAT 转发、PPPoE 拨号和无线吞吐均走硬件流表直通，CPU 日常负载不足 5%。
-   - 4 核 A53 在 1.2 GHz 下运行 Xray / Sing-box 的 AES/ChaCha20 加解密吞吐已达 400~500 Mbps，足以跑满绝大多数宽带和节点，无需为微小的跑分差异冒频繁掉电的风险。
+   - 高通 IPQ6018 配备独立的 NSS 硬件网络协处理器，本固件已启用 NSS DRV + ECM 卸载。千兆线速 NAT、PPPoE 拨号与无线转发均直通硬件流表，CPU 日常负载很低。
+   - 锁频 1.2 GHz 后仍留有充足算力给 EasyTier 等用户态加密转发，无需为微小的跑分差异冒频繁掉电的风险。
 3. **温控与 FEM 功放射频指标保护**：
    - 1.5 GHz 满频功耗激增产生的额外发热，会传导至附近的 QCN5052 射频芯片与外置 FEM 功放，高温会导致发射信号失真（EVM 恶化），反倒容易引起 Wi-Fi 降速与卡顿。
 
 ### 3. 如何手动解锁 1.5 GHz 满频？
 若你已为路由器更换了 **12V 2A 或 12V 2.5A**（接口规格 5.5×2.1mm，内正外负）的足额优质电源：
-1. 登录路由器后台 `http://192.168.2.1`。
+1. 登录路由器后台 `http://192.168.50.1`。
 2. 进入 **系统 (System) -> CPU 性能调节 (CPU Freq)**。
 3. 将“最大频率”由 `1200000` 修改为 `1512000` 并点击保存与应用。
 4. 即可在供电充足的前提下无缝享受 1.5 GHz 满频性能。
@@ -58,8 +59,8 @@
 | **后台 IP** | `192.168.50.1` |
 | **登录用户** | `root` |
 | **管理密码** | `password` |
-| **无线 SSID** | `ImmortalWrt-2.4G` / `ImmortalWrt-5G` |
-| **无线密码** | 无密码（初次进入后台请及时设置） |
+| **无线 SSID** | `2024`（2.4G / 5G 同名） |
+| **无线密码** | `20242024`（WPA2-PSK） |
 
 ---
 
@@ -78,7 +79,7 @@
 
 若当前路由器已运行 ImmortalWrt 或 OpenWrt：
 1. 下载 Release 页面中的 `openwrt-qualcommax-ipq60xx-qihoo_360v6-squashfs-sysupgrade.bin`。
-2. 登录当前路由器后台 `http://192.168.2.1`。
+2. 登录当前路由器后台 `http://192.168.50.1`。
 3. 进入 **系统 (System) -> 备份/升级 (Backup / Flash Firmware)**。
 4. 在“刷写新的固件镜像”处选择该 `.bin` 文件并上传。
 5. **建议取消勾选“保留配置”**（不保留旧版本的实验性残留配置，让出厂加固脚本完整生效）。
