@@ -1,5 +1,5 @@
 #!/bin/sh
-# 360V6 (IPQ6018) 出厂自动加固脚本（首次开机执行）
+# 360V6 (IPQ6000) 出厂自动加固脚本（首次开机执行）
 
 # 1. CPU 调频降压（锁定 1.2GHz，消除超频瞬态尖峰，根治原厂老化电源过流断电闭锁）
 uci set cpufreq.cpufreq=settings
@@ -8,9 +8,13 @@ uci set cpufreq.cpufreq.minfreq0='864000'
 uci set cpufreq.cpufreq.maxfreq0='1200000'
 uci commit cpufreq
 
-# 2. 无线射频协议栈加固（规避高通 ath11k 闭源微码 SAE/PMF 死锁）
+# 2. 无线默认 SSID/密码 + 射频协议栈加固（规避高通 ath11k 闭源微码 SAE/PMF 死锁）
+# 若 wireless 配置尚未生成（首次开机 uci-defaults 时序可能早于 netifd），先生成默认配置再修改
+[ -s /etc/config/wireless ] || wifi config >/dev/null 2>&1
 for iface in $(uci show wireless 2>/dev/null | grep '=wifi-iface' | cut -d. -f2 | cut -d= -f1); do
+    uci set wireless.${iface}.ssid='2024'
     uci set wireless.${iface}.encryption='psk2'
+    uci set wireless.${iface}.key='20242024'
     uci set wireless.${iface}.ieee80211w='0'
     uci set wireless.${iface}.skip_inactivity_poll='1'
     uci set wireless.${iface}.disassoc_low_ack='0'
@@ -25,26 +29,30 @@ uci set wireless.radio1.country='CN'
 uci set wireless.radio1.txpower='20'
 uci commit wireless
 
-# 3. 网络与 Windows 连网探测防假死优化
-uci set network.wan.keepalive='5 3'
-uci commit network
+# 3. NSS 硬件加速：关闭会与 NSS ECM 冲突的 fw4 软件/硬件分流与 Packet Steering
+uci -q set firewall.@defaults[0].flow_offloading='0'
+uci -q set firewall.@defaults[0].flow_offloading_hw='0'
+uci -q set firewall.@defaults[0].fullcone='0'
+uci -q set firewall.@defaults[0].fullcone6='0'
+uci -q commit firewall
 
+uci -q set network.globals.packet_steering='0'
+
+# 4. 关闭 PPPoE LCP keepalive（原 5 秒 3 次过于激进，链路轻微抖动即触发重拨）
+uci -q delete network.wan.keepalive
+uci -q commit network
+
+# 5. 启用 NSS ECM 硬件流表卸载引擎
+uci -q set ecm.global.acceleration_engine='auto'
+uci -q set ecm.general.disable_offloads='0'
+uci -q commit ecm
+/etc/init.d/qca-nss-ecm enable 2>/dev/null
+/etc/init.d/qca-nss-ecm restart 2>/dev/null
+
+# 6. Windows 连网探测防假死优化
 uci add_list dhcp.@dnsmasq[0].rebind_domain='msftncsi.com'
 uci add_list dhcp.@dnsmasq[0].rebind_domain='ipv6.msftncsi.com'
 uci add_list dhcp.@dnsmasq[0].rebind_domain='ntp.org.cn'
 uci commit dhcp
-
-# 4. Passwall Go 运行时内存限制（防止 Xray / Sing-box 堆内存无上限膨胀）
-if [ -f /etc/init.d/passwall ]; then
-    sed -i '/export GOMEMLIMIT/d' /etc/init.d/passwall
-    sed -i '/export GOGC/d' /etc/init.d/passwall
-    sed -i '2i export GOMEMLIMIT=45MiB\nexport GOGC=50' /etc/init.d/passwall
-fi
-
-if [ -f /usr/share/passwall/app.sh ]; then
-    sed -i '/export GOMEMLIMIT/d' /usr/share/passwall/app.sh
-    sed -i '/export GOGC/d' /usr/share/passwall/app.sh
-    sed -i '2i export GOMEMLIMIT=45MiB\nexport GOGC=50' /usr/share/passwall/app.sh
-fi
 
 exit 0
