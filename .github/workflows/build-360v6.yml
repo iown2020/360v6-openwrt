@@ -7,8 +7,9 @@ permissions:
   contents: write
 
 env:
-  REPO_URL: https://github.com/immortalwrt/immortalwrt.git
-  REPO_BRANCH: openwrt-25.12
+  # 使用 LibWrt 25.12-nss：内核/驱动侧已合入 QCA NSS 补丁，ImmortalWrt 官方分支不含 qca-nss-drv/ecm
+  REPO_URL: https://github.com/LiBwrt/LibWrt.git
+  REPO_BRANCH: 25.12-nss
   CONFIG_FILE: .config
   DIY_SCRIPT: diy.sh
   FILES_DIR: files
@@ -55,6 +56,8 @@ jobs:
     - name: Update & Install Feeds
       run: |
         cd openwrt
+        # 追加 EasyTier 源并锁定官方 v2.4.5 tag（该 tag 内 easytier/Makefile 已固定 PKG_VERSION:=2.4.5）
+        echo "src-git easytier https://github.com/EasyTier/luci-app-easytier.git;v2.4.5" >> feeds.conf.default
         ./scripts/feeds update -a
         ./scripts/feeds install -a
 
@@ -69,7 +72,21 @@ jobs:
         echo "=== 检查目标架构 ==="
         grep 'CONFIG_TARGET_BOARD="qualcommax"' .config || (echo "错误：目标平台未被正确设为 qualcommax！" && exit 1)
         grep 'CONFIG_TARGET_qualcommax_ipq60xx_DEVICE_qihoo_360v6=y' .config || (echo "错误：目标设备未被正确设为 360v6！" && exit 1)
-        echo "目标架构与设备校验通过！"
+        echo "=== 检查 NSS 硬件加速 ==="
+        for sym in CONFIG_PACKAGE_kmod-qca-nss-drv=y CONFIG_PACKAGE_kmod-qca-nss-dp=y \
+                   CONFIG_PACKAGE_kmod-qca-nss-ecm=y CONFIG_NSS_DRV_PPPOE_ENABLE=y \
+                   CONFIG_NSS_DRV_IPV6_ENABLE=y; do
+          grep -q "^$sym$" .config || (echo "错误：NSS 配置项缺失 -> $sym" && exit 1)
+        done
+        echo "=== 检查 EasyTier 2.4.5 ==="
+        for sym in CONFIG_PACKAGE_easytier=y CONFIG_PACKAGE_luci-app-easytier=y; do
+          grep -q "^$sym$" .config || (echo "错误：EasyTier 配置项缺失 -> $sym" && exit 1)
+        done
+        if grep -q 'CONFIG_PACKAGE_luci-app-passwall=y' .config; then
+          echo "错误：Passwall 仍在配置中！"
+          exit 1
+        fi
+        echo "目标架构、NSS、EasyTier 校验通过（Passwall 已移除）！"
 
     - name: Download Package Dependencies
       id: package
@@ -108,22 +125,25 @@ jobs:
         tag_name: ${{ env.TAG_NAME }}
         name: 奇虎 360 V6 固件 (${{ env.TAG_NAME }})
         body: |
-          ### 奇虎 360 V6 (IPQ6018) 最新 ImmortalWrt 固件
+          ### 奇虎 360 V6 (IPQ6000) LibWrt 25.12 固件（NSS 硬件加速版）
 
           #### 特性亮点
-          - 稳定内核：Linux 6.12（基于官方 openwrt-25.12 稳定分支）
-          - 硬件加速：集成 QCA NSS 硬件网络加速驱动（NSS Core + NSS DP）
-          - 代理套件：全内置 Passwall，集成本地 Xray-core、Sing-box、ChinaDNS-NG 及 Hysteria 内核
+          - 底包：LibWrt `25.12-nss`（ImmortalWrt 25.12 软件源），Linux 6.12
+          - 硬件加速：真正启用 QCA NSS 卸载（NSS Core/DRV + ECM + NSS DP），PPPoE / IPv6 / VLAN / Wi-Fi 走硬件流表
+          - 组网：内置 EasyTier `v2.4.5`（aarch64，含 LuCI 界面），由官方 v2.4.5 tag 源码构建
+          - 精简：已移除 Passwall 及全部依赖（Xray / Sing-box / ChinaDNS-NG）
+          - 网络：关闭 PPPoE LCP keepalive（默认 `5 3` 过于激进，链路抖动会触发重拨）
           - 出厂加固：
-            - CPU 频率上限安全锁定为 1.2 GHz（防止原装老化电源触发过流锁死保护）
-            - 5G / 2.4G Wi-Fi 默认为纯 WPA2-PSK，关闭 PMF，规避闭源固件并发死锁
-            - 内核连续内存预留 16MB，激进回收 Slab，防止 Order-3 内存耗尽
-            - Passwall Go 运行时内置内存阈值限制（GOMEMLIMIT=45MiB）
+            - CPU 频率上限锁定 1.2 GHz（防止原装老化电源触发过流锁存）
+            - 5G / 2.4G Wi-Fi 默认纯 WPA2-PSK，关闭 PMF，规避 ath11k 闭源微码死锁
+            - 内核连续内存预留 16MB（`vm.min_free_kbytes=16384`）
+            - 默认关闭 fw4 软件分流 / 硬件分流 / FullCone 与 Packet Steering，避免与 NSS ECM 冲突
 
           #### 默认访问信息
           - 管理地址：`192.168.50.1`
           - 管理密码：`password`
-          - Wi-Fi 名称：`ImmortalWrt-2.4G` / `ImmortalWrt-5G`
+          - Wi-Fi 名称：`2024`（2.4G / 5G 同名）
+          - Wi-Fi 密码：`20242024`（WPA2-PSK）
         files: |
           ${{ env.FIRMWARE_PATH }}/*qihoo_360v6*
           ${{ env.FIRMWARE_PATH }}/sha256sums
